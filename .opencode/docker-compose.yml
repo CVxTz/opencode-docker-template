@@ -1,0 +1,65 @@
+x-opencode-common: &opencode-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      # Match the container user to the host user so files created in the
+      # bind-mounted workspace stay owned by you on the host.
+      UID: ${UID:-1000}
+      GID: ${GID:-1000}
+  env_file:
+      - path: ../.env
+        required: false
+  environment:
+    # Load the fireworks provider config. Without this, opencode finds no
+    # model config in the container and falls back to Nebius (auto-detected
+    # via the NEBIUS_API_KEY leaked in from ../.env).
+    OPENCODE_CONFIG: /workspace/.opencode/config.json
+    # Make the code folder itself the "home" directory for opencode. The web
+    # UI's directory picker starts at path.home, so without this it opens at
+    # /home/agent and there is no way to pick ./ (the project root). With it,
+    # the picker starts directly in the code folder and ~ and ./ both resolve
+    # to /workspace.
+    HOME: /workspace
+    # opencode, uv and git would otherwise write their state, caches and
+    # config into $HOME (= /workspace = your repo). Redirect them back to the
+    # container's own home so the repo stays untouched.
+    XDG_STATE_HOME: /home/agent/.local/state
+    XDG_DATA_HOME: /home/agent/.local/share
+    XDG_CACHE_HOME: /home/agent/.cache
+    XDG_CONFIG_HOME: /home/agent/.config
+  volumes:
+    # 1. Mount your current project directory (parent of .opencode)
+    - ..:/workspace
+    # 2. Mask the .venv folder. This ensures the container's Python environment
+    # remains strictly isolated and doesn't conflict with your host machine's .venv
+    - opencode-venv:/workspace/.venv
+
+services:
+  # Interactive Terminal UI:
+  #   docker compose -f .opencode/docker-compose.yml run --rm opencode
+  opencode:
+    <<: *opencode-common
+    container_name: opencode-agent
+
+    # Run in interactive mode so the Terminal UI (TUI) works properly
+    stdin_open: true
+    tty: true
+
+  # Browser-based Web UI:
+  #   docker compose -f .opencode/docker-compose.yml up opencode-web
+  # Then open http://localhost:5174
+  opencode-web:
+    <<: *opencode-common
+    container_name: opencode-web
+
+    # 0.0.0.0 so the web interface is reachable from the host; the entrypoint
+    # forwards these args, i.e. `opencode web --hostname 0.0.0.0 --port 5174`
+    command: ["web", "--hostname", "0.0.0.0", "--port", "5174"]
+
+    ports:
+      # Override the host side with OPENCODE_WEB_PORT if 5174 is taken
+      - "${OPENCODE_WEB_PORT:-5174}:5174"
+
+volumes:
+  opencode-venv:
